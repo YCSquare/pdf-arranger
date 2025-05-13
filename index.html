@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>PDF Page Arranger with Rotate & Delete</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+  <script src="https://unpkg.com/pdf-lib/dist/pdf-lib.min.js"></script>
+  <style>
+    body { font-family: Arial; text-align: center; padding: 20px; }
+    #pagesContainer { display: flex; flex-wrap: wrap; justify-content: center; }
+    .page-item { position: relative; margin: 10px; cursor: grab; }
+    .page-item canvas { border: 1px solid #ccc; transition: transform 0.2s; }
+
+    /* 刪除與復原按鈕 */
+    .delete-btn, .undo-btn {
+      position: absolute; top: 5px; right: 5px;
+      background: none; border: none;
+      font-size: 24px; cursor: pointer;
+      z-index: 10;
+    }
+    .delete-btn { color: red; display: block; }
+    .undo-btn   { color: blue; display: none; }
+
+    /* 被刪除頁面半透明顯示 */
+    .page-item.marked-for-delete canvas { opacity: 0.3; }
+
+    .rotate-btn {
+      position: absolute; bottom: 5px;
+      width: 24px; height: 24px;
+      border: none; background: rgba(0,0,0,0.5);
+      color: white; cursor: pointer;
+      font-size: 14px; line-height: 24px;
+      border-radius: 4px;
+    }
+    .rotate-left  { left: 5px; }
+    .rotate-right { right: 5px; }
+
+    .page-number {
+      position: absolute; bottom: 5px; left: 50%;
+      transform: translateX(-50%);
+      background: rgba(255,255,255,0.8);
+      padding: 2px 6px; font-size: 12px;
+      border-radius: 3px;
+    }
+  </style>
+</head>
+<body>
+  <h2>PDF Page Arranger (Drag & Drop + Rotate + Delete)</h2>
+  <input type="file" id="fileInput" accept="application/pdf" />
+  <div id="pagesContainer"></div>
+  <button onclick="processPDF()">Generate New PDF</button>
+
+  <script>
+    const pdfjsLib = window['pdfjs-dist/build/pdf'];
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
+
+    let pdfDoc = null;
+    let originalFileName = 'Processed.pdf';
+
+    document.getElementById('fileInput').addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      originalFileName = file.name;
+      const arrayBuffer = await file.arrayBuffer();
+      pdfDoc = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
+      renderPages();
+    });
+
+    async function renderPages() {
+      const container = document.getElementById('pagesContainer');
+      container.innerHTML = '';
+
+      for (let i = 1; i <= pdfDoc.numPages; i++) {
+        const page = await pdfDoc.getPage(i);
+        const viewport = page.getViewport({ scale: 0.5 });
+
+        const canvas = document.createElement('canvas');
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        const context = canvas.getContext('2d');
+        await page.render({ canvasContext: context, viewport }).promise;
+
+        const item = document.createElement('div');
+        item.className = 'page-item';
+        item.draggable = true;
+        item.dataset.pageNumber = i;
+        item.dataset.rotation = 0;
+
+        // 刪除與復原按鈕
+        const deleteBtn = document.createElement('button');
+        deleteBtn.className = 'delete-btn';
+        deleteBtn.innerText = '✕';
+        const undoBtn = document.createElement('button');
+        undoBtn.className = 'undo-btn';
+        undoBtn.innerText = '↺';
+
+        deleteBtn.addEventListener('click', () => {
+          item.classList.add('marked-for-delete');
+          deleteBtn.style.display = 'none';
+          undoBtn.style.display   = 'block';
+        });
+        undoBtn.addEventListener('click', () => {
+          item.classList.remove('marked-for-delete');
+          deleteBtn.style.display = 'block';
+          undoBtn.style.display   = 'none';
+        });
+
+        // 旋轉按鈕
+        const btnL = document.createElement('button');
+        btnL.innerText = '⟲';
+        btnL.className = 'rotate-btn rotate-left';
+        btnL.addEventListener('click', () => rotateCanvas(item, canvas, -90));
+
+        const btnR = document.createElement('button');
+        btnR.innerText = '⟳';
+        btnR.className = 'rotate-btn rotate-right';
+        btnR.addEventListener('click', () => rotateCanvas(item, canvas, 90));
+
+        // 頁碼標籤
+        const lbl = document.createElement('div');
+        lbl.className = 'page-number';
+        lbl.innerText = `Page ${i}`;
+
+        item.append(deleteBtn, undoBtn, canvas, btnL, btnR, lbl);
+        container.appendChild(item);
+
+        item.addEventListener('dragstart', handleDragStart);
+        item.addEventListener('dragover', handleDragOver);
+        item.addEventListener('drop', handleDrop);
+      }
+    }
+
+    function rotateCanvas(item, canvas, delta) {
+      let rot = (parseInt(item.dataset.rotation) + delta + 360) % 360;
+      item.dataset.rotation = rot;
+      canvas.style.transform = `rotate(${rot}deg)`;
+    }
+
+    let draggedItem = null;
+    function handleDragStart(e) {
+      draggedItem = this;
+      e.dataTransfer.effectAllowed = 'move';
+    }
+    function handleDragOver(e) { e.preventDefault(); }
+    function handleDrop(e) {
+      e.preventDefault();
+      if (draggedItem !== this) {
+        const container = this.parentNode;
+        const from = Array.from(container.children).indexOf(draggedItem);
+        const to   = Array.from(container.children).indexOf(this);
+        if (from < to) container.insertBefore(draggedgedItem, this.nextSibling);
+        else            container.insertBefore(draggedItem, this);
+      }
+    }
+
+    async function processPDF() {
+      if (!pdfDoc) return;
+      const originalBytes = await pdfDoc.getData();
+      const origPdf = await PDFLib.PDFDocument.load(originalBytes);
+      const newPdf  = await PDFLib.PDFDocument.create();
+
+      const items = Array.from(document.querySelectorAll('.page-item'))
+        .filter(item => !item.classList.contains('marked-for-delete'));
+
+      for (const item of items) {
+        const pageIndex = parseInt(item.dataset.pageNumber) - 1;
+        const rotAngle  = parseInt(item.dataset.rotation);
+        const [copiedPage] = await newPdf.copyPages(origPdf, [pageIndex]);
+        if (rotAngle !== 0) copiedPage.setRotation(PDFLib.degrees(rotAngle));
+        newPdf.addPage(copiedPage);
+      }
+
+      const pdfBytes = await newPdf.save();
+      const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = originalFileName;
+      link.click();
+    }
+  </script>
+</body>
+</html>
